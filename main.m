@@ -1,97 +1,222 @@
-clear; clc;
+clc; clear all;
 
-%% Constants
-mu_sun = 1.32712440018e11; % [km^3/s^2] Gravitational parameter of the Sun
 
-%% Input Dates
-launch_date = datetime(2034,7,6);     % Earth departure
-flyby_date  = datetime(2035,1,1);    % Venus flyby
-arrival_date = datetime(2037,3,17);   % Comet arrival
+% Gravitational parameter of the Sun
+mu_sun = 1.32712440018e11; 
+
+% Input Dates
+initial_date = datetime(2032,12,31);
+launch_date   = datetime(2037,4,1);
 
 % Convert to Julian Dates
+jd_initial = juliandate(initial_date);
 jd_launch = juliandate(launch_date);
-jd_flyby = juliandate(flyby_date);
-jd_arrival = juliandate(arrival_date);
 
-tof1 = (jd_flyby - jd_launch) * 86400;    % [s]
-tof2 = (jd_arrival - jd_flyby) * 86400;   % [s]
+initial_id = 1;
+launch_id = initial_id + (jd_launch - jd_initial);
+const_day_offset = 1;          % days after launch day the arrival window starts 
+return_window_days = 365 * 10;    % 4-year search window for return
 
-%% State Vectors (input from SPICE/Horizons)
-% Earth at departure 
-r_earth = [3.565437082223013E+07, -1.478533028879504E+08, 1.107340669310093E+04];
-v_earth = [28.46935752110131, 6.859753702888095, 2.695344230252417E-04];
 
-% Venus at flyby 
-r_venus = [-8.563747067717355E+07,  6.470781423921068E+07,  5.831463654246382E+06];
-v_venus = [-2.124682800426775E+01, -2.811814052660865E+01,  8.387179139458070E-01];
+% Define time span for the propagation
+% Initial Date for the Propagation
+dt = 86400; % Time step of one day (in seconds)
+t_max = 10000 * dt; % Propagate for X time (in seconds)
+T_earth_d = 365;
+T_venus_d = 225;
+T_mars_d = 687;
+T_311p_d = 1180;
 
-% Comet at arrival
-r_comet = [-3.390260066184935E+07, 2.925066886870129E+08, 1.087589031898230E+06];
-v_comet = [-22.15387280661516, -1.279809995212222, -1.919831648586088];
 
-%% Solve Lambert Transfers
+% Data Allocation
+r_dataEarth = zeros(numel(0:dt:t_max),3);
+r_dataVenus = zeros(numel(0:dt:t_max),3);
+r_dataMars = zeros(numel(0:dt:t_max),3);
+r_data311p = zeros(numel(0:dt:t_max),3);
+v_dataEarth = zeros(numel(0:dt:t_max),3);
+v_dataVenus = zeros(numel(0:dt:t_max),3);
+v_dataMars = zeros(numel(0:dt:t_max),3);
+v_data311p = zeros(numel(0:dt:t_max),3);
 
-[v1_EM, v2_EM, dv1_EM, ~, vinf_in] = solveLambertOptimal(r_earth, v_earth, r_venus, v_venus, tof1, mu_sun);
-[v1_MC, v2_MC, ~, dv2_MC, vinf_out] = solveLambertOptimal(r_venus, v_venus, r_comet, v_comet, tof2, mu_sun);
 
-% Flyby turning angle
-theta_flyby = acos(dot(vinf_in, vinf_out) / (norm(vinf_in)*norm(vinf_out)));
-fprintf('Turning angle at Venus: %.2f deg\n', rad2deg(theta_flyby));
 
-% Total Δv (departure + arrival)
-dv_total = dv1_EM + dv2_MC;
-fprintf('Departure Δv: %.3f km/s\n', dv1_EM);
-fprintf('Arrival Δv: %.3f km/s\n', dv2_MC);
-fprintf('Total mission Δv: %.3f km/s\n', dv_total);
+[r_earth, v_earth] = deal([-2.401326544689433E+07,  1.451318959619919E+08, -1.070974048417062E+04], ...
+                           [-2.988748235147376E+01, -4.974336062964746E+00, -3.772304106908209E-05]);
 
-%% Propagate and Plot
+[r_venus, v_venus] = deal([6.809146217201895E+07,  8.389728980863130E+07, -2.774481338997282E+06], ...
+                           [-2.729977128261288E+01,  2.191785497588214E+01,  1.876489163063463E+00]);
+
+[r_mars, v_mars] = deal([-2.446380464187839E+08, -2.465813948372017E+07,  5.478487412892363E+06], ...
+                           [3.329974849896336E+00, -2.203658800742296E+01, -5.434652819462649E-01]);
+
+[r_311p, v_311p] = deal([2.818788636618620E+08, -1.606433927476021E+08,  2.199377304407741E+07], ...
+                           [7.875018129294897E+00,  1.865766925782450E+01,  9.320867968128654E-01]);
+
+
+% Convert to Keplerian elements
+[a_earth, e_earth, i_earth, RAAN_earth, omega_earth, M_earth] = stateToKepler(r_earth, v_earth, mu_sun);
+[a_venus, e_venus, i_venus, RAAN_venus, omega_venus, M_venus] = stateToKepler(r_venus, v_venus, mu_sun);
+[a_mars, e_mars, i_mars, RAAN_mars, omega_mars, M_mars] = stateToKepler(r_mars, v_mars, mu_sun);
+[a_311p, e_311p, i_311p, RAAN_311p, omega_311p, M_311p] = stateToKepler(r_311p, v_311p, mu_sun);
+
+
+
+% Loop through time and calculate the state vector
+i=0;
+for t = 0:dt:t_max
+    i=i+1;
+    [r_earth_new, v_earth_new] = ephemerisFunction(a_earth, e_earth, i_earth, RAAN_earth, omega_earth, M_earth, mu_sun, t);
+    r_dataEarth(i,:)=r_earth_new;
+    v_dataEarth(i,:)=v_earth_new;
+    [r_venus_new, v_venus_new] = ephemerisFunction(a_venus, e_venus, i_venus, RAAN_venus, omega_venus, M_venus, mu_sun, t);
+    r_dataVenus(i,:)=r_venus_new;
+    v_dataVenus(i,:)=v_venus_new;
+    [r_mars_new, v_mars_new] = ephemerisFunction(a_mars, e_mars, i_mars, RAAN_mars, omega_mars, M_mars, mu_sun, t);
+    r_dataMars(i,:)=r_mars_new;
+    v_dataMars(i,:)=v_mars_new;
+    [r_311p_new, v_311p_new] = ephemerisFunction(a_311p, e_311p, i_311p, RAAN_311p, omega_311p, M_311p, mu_sun, t);
+    r_data311p(i,:)=r_311p_new;
+    v_data311p(i,:)=v_311p_new;
+end
+
+
+min_dv = inf;
+best_return_day = 0;
+
+for day_offset = 1:return_window_days
+
+    % Indexes into ephemeris arrays
+    arrival_id = launch_id + const_day_offset + day_offset;
+
+    r_launch = r_data311p(launch_id,:);
+    v_launch = v_data311p(launch_id,:);
+    r_arrival = r_dataEarth(arrival_id,:);
+    v_arrival = v_dataEarth(arrival_id,:);
+
+    tof_return = (arrival_id - launch_id) * 86400; 
+
+    % Lambert from comet to Earth's future position
+    [v1_return, v2_return] = lambertBattin_V2(r_launch, r_arrival, tof_return, mu_sun, false);
+
+    % Only compute Δv for departure (do not match velocity at Earth)
+    dv_departure_return = norm(v1_return - v_launch);
+
+    if dv_departure_return < min_dv
+        min_dv = dv_departure_return;
+        best_return_day = const_day_offset + day_offset;
+        best_v1 = v1_return;
+        best_r_comet = r_launch;
+        best_r_earth = r_arrival;
+        tof_best_return = tof_return;
+    end
+end
+
+
+% Optional: propagate return trajectory for plotting
 N = 500;
+[t_return, r_return] = propagateKepler(best_r_comet, best_v1, tof_best_return, mu_sun, N);
 
-[~, r_leg1] = propagateKepler(r_earth, v1_EM, tof1, mu_sun, N);
-[~, r_leg2] = propagateKepler(r_venus, v1_MC, tof2, mu_sun, N);
 
-T_earth = 365.25 * 86400;  % [s]
-T_venus  = 225 * 86400;  % [s]
-
-[~, r_earth_full] = propagateKepler(r_earth, v_earth, T_earth, mu_sun, N);
-[~, r_venus_full]  = propagateKepler(r_venus, v_venus, T_venus, mu_sun, N);
-
+% ==PLOT==
 figure; hold on;
-plot3(0,0,0,'yo','MarkerSize',8); % Sun
-plot3(r_earth(1), r_earth(2), r_earth(3), 'bo', 'MarkerSize', 8);
-plot3(r_venus(1), r_venus(2), r_venus(3), 'go', 'MarkerSize', 8);
-plot3(r_comet(1), r_comet(2), r_comet(3), 'ro', 'MarkerSize', 8);
-plot3(r_leg1(:,1), r_leg1(:,2), r_leg1(:,3), 'c-', 'LineWidth', 1.5);
-plot3(r_leg2(:,1), r_leg2(:,2), r_leg2(:,3), 'm-', 'LineWidth', 1.5);
-plot3(r_earth_full(:,1), r_earth_full(:,2), r_earth_full(:,3), 'b--', 'LineWidth', 1.2);
-plot3(r_venus_full(:,1), r_venus_full(:,2), r_venus_full(:,3), 'g--', 'LineWidth', 1.2);
-
-
-legend('Sun', 'Earth', 'Venus (Flyby)', 'Comet', 'Leg 1: Earth→Venus', 'Leg 2: Venus→Comet');
-xlabel('X [km]'); ylabel('Y [km]'); zlabel('Z [km]');
-title('Lambert Transfer with Venus Gravity Assist');
+plot3(0,0,0,'yo','MarkerSize',8,'MarkerFaceColor','#ebe134'); % Sun
+plot3(r_dataEarth(1:T_earth_d,1), r_dataEarth(1:T_earth_d,2), r_dataEarth(1:T_earth_d,3), 'b--', 'LineWidth', 1.2);
+plot3(r_dataVenus(1:T_venus_d,1), r_dataVenus(1:T_venus_d,2), r_dataVenus(1:T_venus_d,3), 'g--', 'LineWidth', 1.2);
+plot3(r_dataMars(1:T_mars_d,1), r_dataMars(1:T_mars_d,2), r_dataMars(1:T_mars_d,3), 'r--', 'LineWidth', 1.2);
+plot3(r_data311p(1:T_311p_d,1), r_data311p(1:T_311p_d,2), r_data311p(1:T_311p_d,3), 'm--', 'LineWidth', 1.2);
+plot3(r_return(:,1), r_return(:,2), r_return(:,3), 'k-', 'LineWidth', 1.5, 'DisplayName', 'Comet → Earth')
+xlabel('X [km]'); ylabel('Y [km]');
 axis equal; grid on; view(3);
 
-%% === Functions ===
+fprintf("Best return found with Δv = %.3f km/s after %d days\n", min_dv, best_return_day);
 
-function [v1, v2, dv1, dv2, vinf] = solveLambertOptimal(r1, v1_ref, r2, v2_ref, tof, mu)
-    % Try both short and long way and pick best
-    [v1a, v2a] = lambertBattin_V2(r1, r2, tof, mu, false);
-    [v1b, v2b] = lambertBattin_V2(r1, r2, tof, mu, true);
 
-    dv1a = norm(v1a - v1_ref); dv2a = norm(v2a - v2_ref);
-    dv1b = norm(v1b - v1_ref); dv2b = norm(v2b - v2_ref);
+% ==FUNCTIONS==
 
-    total_a = dv1a + dv2a;
-    total_b = dv1b + dv2b;
+function [a, e, i, RAAN, omega, M] = stateToKepler(r, v, mu)
+    % Compute specific angular momentum
+    h = cross(r, v);
+    h_mag = norm(h);
 
-    if total_a < total_b
-        v1 = v1a; v2 = v2a; dv1 = dv1a; dv2 = dv2a;
-    else
-        v1 = v1b; v2 = v2b; dv1 = dv1b; dv2 = dv2b;
+    % Semi-major axis
+    r_mag = norm(r);
+    v_mag = norm(v);
+    energy = 0.5 * v_mag^2 - mu / r_mag;
+    a = -mu / (2 * energy);
+
+    % Eccentricity
+    e_vec = cross(v, h) / mu - r / r_mag;
+    e = norm(e_vec);
+
+    % Inclination
+    i = acos(h(3) / h_mag);
+
+    % RAAN (Right Ascension of Ascending Node)
+    K = [0 0 1]; 
+    n = cross(K, h);
+    n_mag = norm(n);
+    RAAN = acos(n(1) / n_mag);
+    if n(2) < 0
+        RAAN = 2*pi - RAAN;
+    end
+    
+    % Argument of Periapsis (omega)
+    omega = acos(dot(n, e_vec) / (n_mag * e));
+    if e_vec(3) < 0
+        omega = 2*pi - omega;
     end
 
-    vinf = v2 - v2_ref;
+    % Mean anomaly (M)
+    n = sqrt(mu / a^3);
+    
+    cosE = dot(e_vec, r) / (e * r_mag);
+    E = acos(max(min(cosE,1),-1));
+    if dot(r, v) < 0
+        E = 2*pi - E;
+    end
+    M = E - e * sin(E);
+end
+
+function [r_new, v_new] = ephemerisFunction(a, e, i, RAAN, omega, M0, mu, t)
+    % Compute the new mean anomaly (M)
+    n = sqrt(mu / a^3); % Mean motion
+    M = M0 + n * t; % New mean anomaly
+    
+    % Solve Kepler's equation to get the eccentric anomaly (E)
+    E = M; % Initial guess
+    tol = 1e-8;
+    for iter = 1:100
+        delta_M = M - (E - e * sin(E)); % Difference between M and E
+        if abs(delta_M) < tol
+            break;
+        end
+        E = E + delta_M / (1 - e * cos(E));
+    end
+    
+    % Calculate the true anomaly
+    theta = 2 * atan2(sqrt(1 + e) * sin(E / 2), sqrt(1 - e) * cos(E / 2));
+    
+    % Calculate the radius
+    r_mag = a * (1 - e^2) / (1 + e * cos(theta)); % Radial distance
+    
+    % Position and velocity in orbital plane
+    r_orbit = [r_mag * cos(theta), r_mag * sin(theta), 0];
+    v_orbit = sqrt(mu * a) / r_mag * [-sin(E), sqrt(1 - e^2) * cos(E), 0];
+    
+    % Rotate the orbit to the true orientation
+    R = rotationMatrix(i, RAAN, omega); % Rotation matrix from orbital plane to 3D
+    r_new = (R * r_orbit')';
+    v_new = (R * v_orbit')';
+end
+
+function R = rotationMatrix(i, RAAN, omega)
+    % Rotation matrix to rotate from orbital plane to 3D space
+    % Using the classical orbital mechanics rotation matrix approach
+    Rz_Omega = [cos(RAAN), sin(RAAN), 0; -sin(RAAN), cos(RAAN), 0; 0, 0, 1];
+    Rx_i = [1, 0, 0; 0, cos(i), sin(i); 0, -sin(i), cos(i)];
+    Rz_omega = [cos(omega), sin(omega), 0; -sin(omega), cos(omega), 0; 0, 0, 1];
+    
+    R = (Rz_omega * Rx_i * Rz_Omega)'; % Combined rotation matrix
 end
 
 function [times, positions] = propagateKepler(r0, v0, dt, mu, N)
